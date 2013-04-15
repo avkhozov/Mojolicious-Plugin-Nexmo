@@ -1,0 +1,6 @@
+Changes
+Makefile.PL
+MANIFEST
+README
+t/Mojolicious-Plugin-Nexmo.t
+lib/Mojolicious/Plugin/Nexmo.pm
