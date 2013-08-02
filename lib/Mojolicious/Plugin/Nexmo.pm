@@ -29,7 +29,7 @@ sub register {
         for my $param (qw/from to text/) {
             my $value = $args->{$param} // $conf->{$param};
             unless(defined $value && length $value > 0) {
-                return &$cb("Param '$param' is required for Nexmo", undef) if defined $cb;
+                return $c->$cb("Param '$param' is required for Nexmo", undef) if defined $cb;
                 die "Param '$param' is required for Nexmo";
             }
             $url->query([$param => $value]);
@@ -39,7 +39,7 @@ sub register {
         return $c->ua->get($url => sub {
             my ($ua, $tx) = @_;
             $c->app->log->debug('Nexmo response: ' . Dumper $tx->res->json) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-            &$cb(undef, $tx->res->json);
+            $c->$cb(undef, $tx->res->json);
         }) if $cb;
         my $tx = $c->ua->get($url);
         $c->app->log->debug('Nexmo response: ' . Dumper $tx->res->json) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
