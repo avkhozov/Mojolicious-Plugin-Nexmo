@@ -119,48 +119,130 @@ Mojolicious::Plugin::Nexmo - Asynchronous (and Synchronous) SMS and TTS (Text To
 
     use Mojolicious::Lite;
 
-    plugin Nexmo => {
-        api_key => 'n3xm0rocks',
+    plugin 'Nexmo' => {
+        api_key    => 'n3xm0rocks',
         api_secret => '12ab34cd',
-        from => 'YourCompanyName', # Required parameter for SMS sending
-        lg => 'de-de' # Language for TTS messages
-    }
-    
-    # /block ? phone_number=447525856424 & message=Guten Tag
+        from       => 'YourCompanyName',
+        lg         => 'de-de'
+    };
+
+    # Simple blocking example
+    # /block ? mode=SMS & phone_number=447525856424 & message=Hello!
     get '/block' => sub {
-    
-    }
+        my $self = shift;
+        #
+        my $mod = $self->param('mode');
+        my $tel = $self->param('phone_number');
+        my $mes = $self->param('message');
+        #
+        $self->render(text => "$tel : $mes");
+        #
+        my ($err, $err_mes, $info) = $self->nexmo(
+            mode => $mod,
+            to   => $tel,
+            text => $mes
+        );
+    };
+
+    # Nonblocking example
+    # /nonblock ? mode=SMS & phone_number=447525856424 & message=Hello!
+    get '/nonblock' => sub {
+        my $self = shift;
+        #
+        my $mod = $self->param('mode');
+        my $tel = $self->param('phone_number');
+        my $mes = $self->param('message');
+        #
+        $self->render(text => "$tel : $mes");
+        #
+        $self->nexmo(
+            mode => $mod,
+            to   => $tel,
+            text => $mes,
+            sub {
+                my ($self, $err, $err_mes, $info) = @_;
+                # ...
+            }
+        );
+    };
+
+    # Nice example with MOJO::IOLoop
+    # /delay ? mode=SMS & phone_number=447525856424 & message=Hello!
+    get '/delay' => sub {
+        my $self = shift;
+        #
+        my $mod = $self->param('mode');
+        my $tel = $self->param('phone_number');
+        my $mes = $self->param('message');
+        #
+        Mojo::IOLoop->delay(
+            sub {
+                my $delay = shift;
+                $self->nexmo(
+                    mode => $mod,
+                    to   => $tel,
+                    text => $mes,
+                    $delay->begin # CallBack
+                );
+                return $self->render(text => "$tel : $mes");
+            },
+            sub {
+                my ($delay, $err, $err_mes, $info) = @_;
+                # ...
+            }
+        );
+    };
+
+    app->start;
 
 =head1 DESCRIPTION
 
-Stub documentation for Mojolicious::Plugin::Nexmo, created by h2xs. It looks like the
-author of the extension was negligent enough to leave the stub
-unedited. // TODO
+This plugin provides an easy way to send SMS and TTS with Nexmo API
 
 =head1 OPTIONS
 
-L<Mojolicious::Plugin::Nexmo> supports the following options.
+L<Mojolicious::Plugin::Nexmo> supports the following options:
 
-=head2 api_key
+=item api_key
 
-Your Nexmo API key
+=item api_secret
 
-=head2 api_secret
+Your Nexmo API key & API secret. This two options are required, you should always declare it:
 
-Your Nexmo API secret
+    plugin 'Nexmo' => {
+        api_key    => '...',
+        api_secret => '...'
+        # ...
+    }
 
-=head2 from
+=item mode
 
-=head2 to
+Can be 'SMS' or 'TTS'. Depending on mode there are different options:
 
-=head2 lg
+=head2 SMS options
 
-=head1 METHODS
+    $self->nexmo(
+        mode => 'SMS',
+        # options
+    );
+
+    View full list of SMS options on https://docs.nexmo.com/index.php/sms-api/send-message
+
+=head2 TTS options
+
+    $self->nexmo(
+        mode => 'TTS',
+        # options
+    );
+
+    View full list of TTS options on https://docs.nexmo.com/index.php/voice-api/text-to-speech
 
 =head1 SEE ALSO
 
 L<Mojolicious::Plugin::SMS>
+
 L<Nexmo::SMS>
+
 L<SMS::Send::Nexmo>
 
 =head1 AUTHOR
