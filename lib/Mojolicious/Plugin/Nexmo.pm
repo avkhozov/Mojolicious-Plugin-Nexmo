@@ -8,83 +8,104 @@ use Data::Dumper;
 $Data::Dumper::Indent = 0;
 $Data::Dumper::Terse = 1;
 
-our $VERSION = '0.02.01';
+our $VERSION = '0.02';
 
 sub register {
+
     my ($self, $app, $conf) = @_;
 
-    my $base_url_sms = Mojo::URL->new('https://rest.nexmo.com/sms/json');
-    my $base_url_tts = Mojo::URL->new('https://rest.nexmo.com/tts/json');
+    my $base_url = Mojo::URL->new('https://rest.nexmo.com');
+    my @sms_params = qw ( from to type text status-report-req client-ref network-code vcard vcal ttl message-class body udh );
+    my @tts_params = qw ( to from text lg voice repeat drop_if_machine callback callback_method );
 
     # Required params
     for my $param (qw/api_key api_secret/) {
         return $app->log->error("Param '$param' is required for Nexmo") unless $conf->{$param};
-        $base_url_sms->query([$param => $conf->{$param}]);
-        $base_url_tts->query([$param => $conf->{$param}]);
+        $base_url->query([$param => $conf->{$param}]);
     }
 
-    # SMS
-    $app->helper(send_sms => sub {
+    # nexmo helper
+    $app->helper(nexmo => sub {
+
         my $c = shift;
         my $cb = ref $_[-1] eq 'CODE' ? pop : undef;
         my $args = {@_};
-        my $url = $base_url_sms->clone;
+        my $url = $base_url->clone;
+        my $params;
 
-        for my $param (qw/from to text/) {
+        # Mode (SMS / TTS)
+        my $mode = lc ($args->{'mode'} // $conf->{'mode'});
+        if ($mode eq 'sms') {
+            $url->path('/sms/json');
+            $params = \ @sms_params;
+        } elsif ($mode eq 'tts') {
+            $params = \ @tts_params;
+            $url->path('/tts/json');
+        } else {
+            $c->app->log->debug( "No such mode: '${mode}'. Use 'tts' or 'sms'" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+            return $c->$cb( -1, "No such mode: '${mode}'. Use 'tts' or 'sms'", undef ) if defined $cb;
+            return ( -1, "No such mode: '${mode}'. Use 'tts' or 'sms'", undef );
+        }
+
+        # Params for request
+        for my $param (@$params) {
             my $value = $args->{$param} // $conf->{$param};
-            unless(defined $value && length $value > 0) {
-                return $c->$cb("Param '$param' is required for Nexmo SMS", undef) if defined $cb;
-                die "Param '$param' is required for Nexmo SMS";
-            }
             $url->query([$param => $value]);
         }
 
         # Non blocking
         return $c->ua->get($url => sub {
             my ($ua, $tx) = @_;
-            $c->app->log->debug('Nexmo SMS response: ' . Dumper $tx->res->json) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-            $c->$cb(undef, $tx->res->json);
-        }) if $cb;
-
-        # Blocking
-        my $tx = $c->ua->get($url);
-        $c->app->log->debug('Nexmo SMS response: ' . Dumper $tx->res->json) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-        return $tx->res->json;
-    });
-
-    # TTS - Text To Speech
-    $app->helper(send_tts => sub {
-        my $c = shift;
-        my $cb = ref $_[-1] eq 'CODE' ? pop : undef;
-        my $args = {@_};
-        my $url = $base_url_tts->clone;
-
-        for my $param (qw/to text/) {
-            my $value = $args->{$param} // $conf->{$param};
-            unless (defined $value && length $value > 0) {
-                return $c->$cb("Param '$param' is required for Nexmo TTS", undef) if defined $cb;
-                die "Param '$param' is required for Nexmo TTS";
+            if ( my $res = $tx->success ) {
+                # if ( (my $code = $tx->res->code) != 200 ) {
+                #     $c->app->log->debug( "Nexmo \U${mode}\E response strange: CODE[${code}]" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+                #     return $c->$cb( $code, 'Something strange', undef );
+                # }
+                $c->app->log->debug( "Nexmo \U${mode}\E response: " . Dumper $res->json ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+                if ($mode eq 'tts') {
+                    $c->$cb( $res->json('/status'), $res->json('/error-text'), $res->json );
+                } elsif ($mode eq 'sms') {
+                    # SMS can be divided into several parts
+                    my $count = $res->json('/message-count') - 1;
+                    for my $i (0..$count) {
+                        return $c->$cb( $res->json("/messages/$i/status"), $res->json("/messages/$i/error-text"), $res->json ) if $res->json("/messages/$i/status") != 0;
+                    }
+                    $c->$cb( 0, undef, $res->json );
+                }
+            } else {
+                my ($error, $code) = $tx->error;
+                $c->app->log->debug( "Nexmo \U${mode}\E request failed: CODE[${code}] ERROR[${error}]" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+                $c->$cb( $code, $error, undef );
             }
-            $url->query([$param => $value]);
-        }
-        my $value = $args->{'lg'} // $conf->{'lg'};
-        $url->query(['lg' => $value]) if (defined $value && length $value > 0);
-
-        # Non blocking
-        return $c->ua->get($url => sub {
-            my ($ua, $tx) = @_;
-            $c->app->log->debug('Nexmo TTS response: ' . Dumper $tx->res->json) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-            $c->$cb(undef, $tx->res->json);
         }) if $cb;
 
         # Blocking
         my $tx = $c->ua->get($url);
-        $c->app->log->debug('Nexmo TTS response: ' . Dumper $tx->res->json) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-        return $tx->res->json;
+        if ( my $res = $tx->success ) {
+            # if ( (my $code = $res->code) != 200 ) {
+            #     $c->app->log->debug( "Nexmo \U${mode}\E response strange: CODE[${code}]" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+            #     return ( $code, 'Something strange', undef );
+            # }
+            $c->app->log->debug( "Nexmo \U${mode}\E response: " . Dumper $res->json ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+            if ($mode eq 'tts') {
+                return ( $res->json('/status'), $res->json('/error-text'), $res->json );
+            } elsif ($mode eq 'sms') {
+                # SMS can be divided into several parts
+                my $count = $res->json('/message-count') - 1;
+                for my $i (0..$count) {
+                    return ( $res->json("/messages/$i/status"), $res->json("/messages/$i/error-text"), $res->json ) if $res->json("/messages/$i/status") != 0;
+                }
+                return ( 0, undef, $res->json );
+            }
+        } else {
+            my ($error, $code) = $tx->error;
+            $c->app->log->debug( "Nexmo \U${mode}\E request failed: CODE[${code}] ERROR[${error}]" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+            return ( $code, $error, undef );
+        }
+
     });
 
 }
-
 
 1;
 
@@ -96,28 +117,19 @@ Mojolicious::Plugin::Nexmo - Asynchronous (and Synchronous) SMS and TTS (Text To
 
 =head1 SYNOPSIS
 
-    use Mojolicious::Plugin::Nexmo;
+    use Mojolicious::Lite;
 
     plugin Nexmo => {
         api_key => 'n3xm0rocks',
         api_secret => '12ab34cd',
-        from => 'test',
-        to => '44123456789'
-        lg => 'ru-ru' # Language for TTS messages
+        from => 'YourCompanyName', # Required parameter for SMS sending
+        lg => 'de-de' # Language for TTS messages
     }
-
-    $c->send_sms(text => 'Message data!');
-
-    $c->send_sms(
-    	text => 'Message data!',
-    	from => 'CompanyName',
-    	to => '44987654321'
-    );
-
-    $c->send_sms(
-    	text => 'Message data!',
-    	to => '44987654321'
-    );
+    
+    # /block ? phone_number=447525856424 & message=Guten Tag
+    get '/block' => sub {
+    
+    }
 
 =head1 DESCRIPTION
 
