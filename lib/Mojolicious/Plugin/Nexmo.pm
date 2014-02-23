@@ -14,7 +14,7 @@ sub register {
 
     my ($self, $app, $conf) = @_;
 
-    my $base_url = Mojo::URL->new('http://rest.nexmo.com');
+    my $base_url = Mojo::URL->new('https://rest.nexmo.com');
     my @sms_params = qw ( from to type text status-report-req client-ref network-code vcard vcal ttl message-class body udh );
     my @tts_params = qw ( to from text lg voice repeat drop_if_machine callback callback_method );
 
