@@ -8,20 +8,21 @@ use Data::Dumper;
 $Data::Dumper::Indent = 0;
 $Data::Dumper::Terse = 1;
 
-our $VERSION = '0.02';
+our $VERSION = '0.02.01';
 
 sub register {
 
     my ($self, $app, $conf) = @_;
 
-    my $base_url = Mojo::URL->new('https://rest.nexmo.com');
+    my $base_url = Mojo::URL->new('http://rest.nexmo.com');
     my @sms_params = qw ( from to type text status-report-req client-ref network-code vcard vcal ttl message-class body udh );
     my @tts_params = qw ( to from text lg voice repeat drop_if_machine callback callback_method );
 
     # Required params
-    for my $param (qw/api_key api_secret/) {
-        return $app->log->error("Param '$param' is required for Nexmo") unless $conf->{$param};
-        $base_url->query([$param => $conf->{$param}]);
+    for my $param (qw( api_key api_secret)) {
+        # return $app->log->error("Param '$param' is required for Nexmo") unless $conf->{$param};
+        die "Param '$param' is required for Nexmo." unless $conf->{$param};
+        $base_url->query->param($param => $conf->{$param});
     }
 
     # nexmo helper
@@ -34,7 +35,7 @@ sub register {
         my $params;
 
         # Mode (SMS / TTS)
-        my $mode = lc ($args->{'mode'} // $conf->{'mode'});
+        my $mode = lc ($args->{'mode'} || $conf->{'mode'} || '');
         if ($mode eq 'sms') {
             $url->path('/sms/json');
             $params = \ @sms_params;
@@ -42,25 +43,30 @@ sub register {
             $params = \ @tts_params;
             $url->path('/tts/json');
         } else {
-            $c->app->log->debug( "No such mode: '${mode}'. Use 'tts' or 'sms'" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-            return $c->$cb( -1, "No such mode: '${mode}'. Use 'tts' or 'sms'", undef ) if defined $cb;
-            return ( -1, "No such mode: '${mode}'. Use 'tts' or 'sms'", undef );
+            # $c->app->log->debug( "No such mode: '${mode}'. Use 'TTS' or 'SMS'" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+            # return $c->$cb( -1, "No such mode: '${mode}'. Use 'TTS' or 'SMS'", undef ) if defined $cb;
+            # return ( -1, "No such mode: '${mode}'. Use 'TTS' or 'SMS'", undef );
+            die "No such mode: '${mode}'. Use 'TTS' or 'SMS'.";
         }
 
         # Params for request
         for my $param (@$params) {
+            next if ( (exists $args->{$param}) && !(defined $args->{$param}) ); # disable global parameters
             my $value = $args->{$param} // $conf->{$param};
-            $url->query([$param => $value]);
+            $url->query->param($param => $value) if defined $value;
         }
 
         # Non blocking
         return $c->ua->get($url => sub {
             my ($ua, $tx) = @_;
             if ( my $res = $tx->success ) {
-                # if ( (my $code = $tx->res->code) != 200 ) {
-                #     $c->app->log->debug( "Nexmo \U${mode}\E response strange: CODE[${code}]" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-                #     return $c->$cb( $code, 'Something strange', undef );
-                # }
+                # response code != 200 (for the future)
+                if ( (my $code = $tx->res->code) != 200 ) {
+                    $c->app->log->debug( "Nexmo \U${mode}\E request failed. Something strange: CODE[${code}]." )
+                        if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+                    return $c->$cb( -1, "Something strange: CODE[${code}]" , undef );
+                }
+                #
                 $c->app->log->debug( "Nexmo \U${mode}\E response: " . Dumper $res->json ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
                 if ($mode eq 'tts') {
                     $c->$cb( $res->json('/status'), $res->json('/error-text'), $res->json );
@@ -68,39 +74,53 @@ sub register {
                     # SMS can be divided into several parts
                     my $count = $res->json('/message-count') - 1;
                     for my $i (0..$count) {
-                        return $c->$cb( $res->json("/messages/$i/status"), $res->json("/messages/$i/error-text"), $res->json ) if $res->json("/messages/$i/status") != 0;
+                        return $c->$cb( $res->json("/messages/$i/status"), $res->json("/messages/$i/error-text"), $res->json )
+                            if $res->json("/messages/$i/status") != 0;
                     }
-                    $c->$cb( 0, undef, $res->json );
+                    $c->$cb( 0, "Success", $res->json );
                 }
             } else {
-                my ($error, $code) = $tx->error;
-                $c->app->log->debug( "Nexmo \U${mode}\E request failed: CODE[${code}] ERROR[${error}]" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-                $c->$cb( $code, $error, undef );
+                # network error (for the future)
+                my ($error, $code) = ('', '');
+                ($error, $code) = $tx->error;
+                $c->app->log->debug( "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error]" )
+                    if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+                $c->$cb( -1, "Network error: CODE[$code] MESSAGE[$error]", undef );
+                #
             }
         }) if $cb;
 
         # Blocking
         my $tx = $c->ua->get($url);
         if ( my $res = $tx->success ) {
-            # if ( (my $code = $res->code) != 200 ) {
-            #     $c->app->log->debug( "Nexmo \U${mode}\E response strange: CODE[${code}]" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-            #     return ( $code, 'Something strange', undef );
-            # }
-            $c->app->log->debug( "Nexmo \U${mode}\E response: " . Dumper $res->json ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+            # response code != 200 (for the future)
+            if ( (my $code = $res->code) != 200 ) {
+                $c->app->log->debug( "Nexmo \U${mode}\E request failed. Something strange: CODE[${code}]." )
+                    if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+                return( -1, "Something strange: CODE[${code}]" , undef );
+            }
+            #
+            $c->app->log->debug( "Nexmo \U${mode}\E response: " . Dumper $res->json )
+                if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
             if ($mode eq 'tts') {
-                return ( $res->json('/status'), $res->json('/error-text'), $res->json );
+                return( $res->json('/status'), $res->json('/error-text'), $res->json );
             } elsif ($mode eq 'sms') {
                 # SMS can be divided into several parts
                 my $count = $res->json('/message-count') - 1;
                 for my $i (0..$count) {
-                    return ( $res->json("/messages/$i/status"), $res->json("/messages/$i/error-text"), $res->json ) if $res->json("/messages/$i/status") != 0;
+                    return ( $res->json("/messages/$i/status"), $res->json("/messages/$i/error-text"), $res->json )
+                        if $res->json("/messages/$i/status") != 0;
                 }
-                return ( 0, undef, $res->json );
+                return( 0, "Success", $res->json );
             }
         } else {
-            my ($error, $code) = $tx->error;
-            $c->app->log->debug( "Nexmo \U${mode}\E request failed: CODE[${code}] ERROR[${error}]" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-            return ( $code, $error, undef );
+            # network error (for the future)
+            my ($error, $code) = ('', '');
+            ($error, $code) = $tx->error;
+            $c->app->log->debug( "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error]." )
+                if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+            return( -1, "Network error: CODE[$code] MESSAGE[$error]", undef );
+            #
         }
 
     });
@@ -113,30 +133,41 @@ __END__
 
 =head1 NAME
 
-Mojolicious::Plugin::Nexmo - Asynchronous (and Synchronous) SMS and TTS (Text To Speech) sending from Nexmo provider
+Mojolicious::Plugin::Nexmo - Asynchronous (and synchronous) SMS and TTS (Text To Speech) sending
+with L<Nexmo|https://www.nexmo.com/> provider.
+
+=head1 VERSION
+
+1.00
 
 =head1 SYNOPSIS
-
-    use Mojolicious::Lite;
 
     plugin 'Nexmo' => {
         api_key    => 'n3xm0rocks',
         api_secret => '12ab34cd',
-        from       => 'YourCompanyName',
-        lg         => 'de-de'
+        from       => 'YourCompanyName',   # This options are global, you don't need
+        lg         => 'de-de'              # to declare them in every request
     };
 
-    # Simple blocking example
+=head2 Simple blocking example
+
+    use Mojolicious::Lite
+
+    plugin 'Nexmo' => {
+        api_key    => 'n3xm0rocks',
+        api_secret => '12ab34cd'
+    };
+
     # /block ? mode=SMS & phone_number=447525856424 & message=Hello!
     get '/block' => sub {
         my $self = shift;
-        #
+    
         my $mod = $self->param('mode');
         my $tel = $self->param('phone_number');
         my $mes = $self->param('message');
-        #
+        
         $self->render(text => "$tel : $mes");
-        #
+        
         my ($err, $err_mes, $info) = $self->nexmo(
             mode => $mod,
             to   => $tel,
@@ -144,17 +175,27 @@ Mojolicious::Plugin::Nexmo - Asynchronous (and Synchronous) SMS and TTS (Text To
         );
     };
 
-    # Nonblocking example
+    app->start;
+
+=head2 Nonblocking example
+
+    use Mojolicious::Lite;
+
+    plugin 'Nexmo' => {
+        api_key    => 'n3xm0rocks',
+        api_secret => '12ab34cd'
+    };
+
     # /nonblock ? mode=SMS & phone_number=447525856424 & message=Hello!
     get '/nonblock' => sub {
         my $self = shift;
-        #
+        
         my $mod = $self->param('mode');
         my $tel = $self->param('phone_number');
         my $mes = $self->param('message');
-        #
+        
         $self->render(text => "$tel : $mes");
-        #
+        
         $self->nexmo(
             mode => $mod,
             to   => $tel,
@@ -166,15 +207,26 @@ Mojolicious::Plugin::Nexmo - Asynchronous (and Synchronous) SMS and TTS (Text To
         );
     };
 
-    # Nice example with MOJO::IOLoop
+    app->start;
+
+=head2 Nice example with L<Mojo::IOLoop>
+
+    use Mojolicious::Lite;
+    use Mojo::IOLoo;
+
+    plugin 'Nexmo' => {
+        api_key    => 'n3xm0rocks',
+        api_secret => '12ab34cd'
+    };
+
     # /delay ? mode=SMS & phone_number=447525856424 & message=Hello!
     get '/delay' => sub {
         my $self = shift;
-        #
+        
         my $mod = $self->param('mode');
         my $tel = $self->param('phone_number');
         my $mes = $self->param('message');
-        #
+        
         Mojo::IOLoop->delay(
             sub {
                 my $delay = shift;
@@ -197,17 +249,57 @@ Mojolicious::Plugin::Nexmo - Asynchronous (and Synchronous) SMS and TTS (Text To
 
 =head1 DESCRIPTION
 
-This plugin provides an easy way to send SMS and TTS with Nexmo API
+This plugin provides an easy way to send SMS and TTS with Nexmo API.
 
 =head1 OPTIONS
 
+You can redefine global options:
+
+    plugin 'Nexmo' => {
+        api_key    => 'n3xm0rocks',
+        api_secret => '12ab34cd',
+        from       => 'YourCompanyName'  # Global option
+    };
+
+    # ...
+        
+        $self->nexmo(
+            mode => $mod,
+            to   => $tel,
+            text => $mes,
+            from => 'NewCompanyName'  # 'NewCompanyName' will be used in this response
+        );
+
+    # ...
+
+Or you can disable global options by setting them in C<undef>:
+
+    plugin 'Nexmo' => {
+        api_key    => 'n3xm0rocks',
+        api_secret => '12ab34cd',
+        lg         => 'de-de'  # Global option
+    };
+
+    # ...
+        
+        $self->nexmo(
+            mode => $mod,
+            to   => $tel,
+            text => $mes,
+            lg   => undef   # lg will be missed in this response
+        );
+
+    # ...
+
 L<Mojolicious::Plugin::Nexmo> supports the following options:
+
+=over
 
 =item api_key
 
 =item api_secret
 
-Your Nexmo API key & API secret. This two options are required, you should always declare it:
+Your Nexmo API key & API secret. This two options are required, you should always declare it globally:
 
     plugin 'Nexmo' => {
         api_key    => '...',
@@ -219,23 +311,152 @@ Your Nexmo API key & API secret. This two options are required, you should alway
 
 Can be 'SMS' or 'TTS'. Depending on mode there are different options:
 
+=back
+
 =head2 SMS options
+
+See detailed description of SMS options at L<https://docs.nexmo.com/index.php/sms-api/send-message>.
 
     $self->nexmo(
         mode => 'SMS',
         # options
     );
 
-    View full list of SMS options on https://docs.nexmo.com/index.php/sms-api/send-message
+=over
+
+=item from
+
+=item to
+
+=item type
+
+=item text
+
+=item status-report-req
+
+=item client-ref
+
+=item network-code
+
+=item vcard
+
+=item vcal
+
+=item ttl
+
+=item message-class
+
+=item body
+
+=item udh
+
+=back
 
 =head2 TTS options
+
+See detailed description of TTS options at L<https://docs.nexmo.com/index.php/voice-api/text-to-speech>.
 
     $self->nexmo(
         mode => 'TTS',
         # options
     );
 
-    View full list of TTS options on https://docs.nexmo.com/index.php/voice-api/text-to-speech
+=over
+
+=item to
+
+=item from
+
+=item text
+
+=item lg
+
+=item voice
+
+=item repeat
+
+=item drop_if_machine
+
+=item callback
+
+=item callback_method
+
+=back
+
+=head2 Asynchronous and synchronous modes
+
+For B<asynchronous> mode you should pass a callback as last parameter:
+
+    $self->nexmo(
+        mode => 'SMS',
+        # options
+        sub {
+            my ($self, $err, $err_mes, $info) = @_;
+            # ...
+        }
+    );
+
+If a callback is missed, plugin works in B<synchronous> mode:
+
+    my ($err, $err_mes, $info) = $self->nexmo(
+        mode => 'SMS',
+        # options
+    );
+
+=head1 RETURN VALUES
+
+=head2 Error code (C<$err>)
+
+Values:
+
+=over
+
+=item B<0>
+
+Success.
+
+=item B<-1>
+
+Network error.
+I<Maybe you will never encounter with this response code.
+It was left for the future, if something happens to Nexmo service...>
+
+=item B<1 - 99>
+
+Nexmo error response codes.
+
+See detailed description of SMS response codes at
+L<https://docs.nexmo.com/index.php/sms-api/send-message#response_code>.
+
+See detailed description of TTS response codes at
+L<https://docs.nexmo.com/index.php/voice-api/text-to-speech#tts_response_code>.
+
+=back
+
+B<IT'S IMPORTANT:>
+If you use 'SMS' mode, message can be divided into several parts.
+If all parts were sent succesfully, then B<0> is returned.
+Otherwise C<$err> will contain error code of first failed part.
+If you need error codes of all parts, use C<$info> hash.
+
+=head2 Error message (C<$err_mes>)
+
+=head2 Additional information (C<$info>)
+
+Hash that corresponds to the Nexmo JSON response.
+C<$info> is undefined if C<$err> equals to B<-1>:
+
+    if ($err == -1) {
+        # $info is undefined
+    } else {
+        # $info is defined
+    }
+
+=head1 DEBUG
+
+Set C<MOJOLICIOUS_NEXMO_DEBUG> environment variable to turn Nexmo debug on.
+
+    $ MOJOLICIOUS_NEXMO_DEBUG=1 morbo test.pl
 
 =head1 SEE ALSO
 
@@ -251,7 +472,7 @@ Andrey Khozov, E<lt>avkhozov@googlemail.comE<gt>
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2013 by avkhozov
+Copyright (C) 2014 by avkhozov
 
 This library is free software; you can redistribute it and/or modify
 it under the same terms as Perl itself, either Perl version 5.10.1 or,
