@@ -19,7 +19,7 @@ sub register {
     my @tts_params = qw ( to from text lg voice repeat drop_if_machine callback callback_method );
 
     # Required params
-    for my $param (qw( api_key api_secret)) {
+    for my $param (qw( api_key api_secret )) {
         # return $app->log->error("Param '$param' is required for Nexmo") unless $conf->{$param};
         die "Param '$param' is required for Nexmo." unless $conf->{$param};
         $base_url->query->param($param => $conf->{$param});
@@ -83,7 +83,7 @@ sub register {
                 # network error (for the future)
                 my ($error, $code) = ('', '');
                 ($error, $code) = $tx->error;
-                $c->app->log->debug( "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error]" )
+                $c->app->log->debug( "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error]." )
                     if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
                 $c->$cb( -1, "Network error: CODE[$code] MESSAGE[$error]", undef );
                 #
