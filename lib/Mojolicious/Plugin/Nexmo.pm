@@ -15,8 +15,6 @@ sub register {
     my ($self, $app, $conf) = @_;
 
     my $base_url = Mojo::URL->new('https://rest.nexmo.com');
-    my @sms_params = qw ( from to type text status-report-req client-ref network-code vcard vcal ttl message-class body udh );
-    my @tts_params = qw ( to from text lg voice repeat machine_detection machine_timeout callback callback_method );
 
     # Required params
     for my $param (qw( api_key api_secret )) {
@@ -31,26 +29,31 @@ sub register {
         my $cb = ref $_[-1] eq 'CODE' ? pop : undef;
         my $args = {@_};
         my $url = $base_url->clone;
-        my $params;
 
         # Mode (SMS / TTS)
         my $mode = lc ($args->{'mode'} || $conf->{'mode'} || '');
         if ($mode eq 'sms') {
             $url->path('/sms/json');
-            $params = \ @sms_params;
         } elsif ($mode eq 'tts') {
-            $params = \ @tts_params;
             $url->path('/tts/json');
         } else {
             die "Nexmo: no such mode ('${mode}'). Use 'TTS' or 'SMS'.";
         }
 
         # Params for request
-        for my $param (@$params) {
-            next if ( (exists $args->{$param}) && !(defined $args->{$param}) ); # ability to disable global parameters
-            my $value = $args->{$param} // $conf->{$param};
+        for my $param (keys %$args) {
+            next if $param eq 'mode';
+            my $value = $args->{$param};
             $url->query->param($param => $value) if defined $value;
         }
+        for my $param (keys %$conf) {
+            next if ( $param eq 'mode' || $param eq 'api_key' || $param eq 'api_secret' );
+            next if exists $args->{$param}; # ability to disable global parameters
+            my $value = $conf->{$param};
+            $url->query->param($param => $value) if defined $value;
+        }
+        # Log HTTP request
+        $c->app->log->debug( "Nexmo \U${mode}\E request:  " . $url ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
 
         # Non blocking
         return $c->ua->get($url => sub {
@@ -79,7 +82,7 @@ sub register {
                 }
             } else {
                 # network error
-                ($error, $code) = $tx->error;
+                my ($error, $code) = $tx->error;
                 $error ||= '';
                 $code ||= '';
                 $c->app->log->debug( "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error]." )
@@ -116,7 +119,7 @@ sub register {
             }
         } else {
             # network error
-            ($error, $code) = $tx->error;
+            my ($error, $code) = $tx->error;
             $error ||= '';
             $code ||= '';
             $c->app->log->debug( "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error]." )
@@ -377,7 +380,9 @@ See detailed description of TTS options at L<https://docs.nexmo.com/index.php/vo
 
 =item repeat
 
-=item drop_if_machine
+=item machine_detection
+
+=item machine_timeout
 
 =item callback
 
@@ -449,7 +454,7 @@ Hash that corresponds to the Nexmo JSON response.
 
 Set C<MOJOLICIOUS_NEXMO_DEBUG> environment variable to turn Nexmo debug on.
 
-    $ MOJOLICIOUS_NEXMO_DEBUG=1 morbo test.pl
+    $ MOJOLICIOUS_NEXMO_DEBUG=1 morbo test
 
 =head1 SEE ALSO
 
