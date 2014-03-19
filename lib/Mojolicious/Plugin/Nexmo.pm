@@ -16,12 +16,11 @@ sub register {
 
     my $base_url = Mojo::URL->new('https://rest.nexmo.com');
     my @sms_params = qw ( from to type text status-report-req client-ref network-code vcard vcal ttl message-class body udh );
-    my @tts_params = qw ( to from text lg voice repeat drop_if_machine callback callback_method );
+    my @tts_params = qw ( to from text lg voice repeat machine_detection machine_timeout callback callback_method );
 
     # Required params
     for my $param (qw( api_key api_secret )) {
-        # return $app->log->error("Param '$param' is required for Nexmo") unless $conf->{$param};
-        die "Param '$param' is required for Nexmo." unless $conf->{$param};
+        die "Nexmo: param '$param' is required." unless $conf->{$param};
         $base_url->query->param($param => $conf->{$param});
     }
 
@@ -43,15 +42,12 @@ sub register {
             $params = \ @tts_params;
             $url->path('/tts/json');
         } else {
-            # $c->app->log->debug( "No such mode: '${mode}'. Use 'TTS' or 'SMS'" ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-            # return $c->$cb( -1, "No such mode: '${mode}'. Use 'TTS' or 'SMS'", undef ) if defined $cb;
-            # return ( -1, "No such mode: '${mode}'. Use 'TTS' or 'SMS'", undef );
-            die "No such mode: '${mode}'. Use 'TTS' or 'SMS'.";
+            die "Nexmo: no such mode ('${mode}'). Use 'TTS' or 'SMS'.";
         }
 
         # Params for request
         for my $param (@$params) {
-            next if ( (exists $args->{$param}) && !(defined $args->{$param}) ); # disable global parameters
+            next if ( (exists $args->{$param}) && !(defined $args->{$param}) ); # ability to disable global parameters
             my $value = $args->{$param} // $conf->{$param};
             $url->query->param($param => $value) if defined $value;
         }
@@ -60,11 +56,12 @@ sub register {
         return $c->ua->get($url => sub {
             my ($ua, $tx) = @_;
             if ( my $res = $tx->success ) {
-                # response code != 200 (for the future)
+                # response code != 200
                 if ( (my $code = $tx->res->code) != 200 ) {
+                    $code ||= '';
                     $c->app->log->debug( "Nexmo \U${mode}\E request failed. Something strange: CODE[${code}]." )
                         if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-                    return $c->$cb( -1, "Something strange: CODE[${code}]" , undef );
+                    return $c->$cb( -1, "Something strange: CODE[${code}]" , {} );
                 }
                 #
                 $c->app->log->debug( "Nexmo \U${mode}\E response: " . Dumper $res->json ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
@@ -77,15 +74,17 @@ sub register {
                         return $c->$cb( $res->json("/messages/$i/status"), $res->json("/messages/$i/error-text"), $res->json )
                             if $res->json("/messages/$i/status") != 0;
                     }
+                    #
                     $c->$cb( 0, "Success", $res->json );
                 }
             } else {
-                # network error (for the future)
-                my ($error, $code) = ('', '');
+                # network error
                 ($error, $code) = $tx->error;
+                $error ||= '';
+                $code ||= '';
                 $c->app->log->debug( "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error]." )
                     if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-                $c->$cb( -1, "Network error: CODE[$code] MESSAGE[$error]", undef );
+                $c->$cb( -1, "Network error: CODE[$code] MESSAGE[$error]", {} );
                 #
             }
         }) if $cb;
@@ -93,11 +92,12 @@ sub register {
         # Blocking
         my $tx = $c->ua->get($url);
         if ( my $res = $tx->success ) {
-            # response code != 200 (for the future)
+            # response code != 200
             if ( (my $code = $res->code) != 200 ) {
+                $code ||= '';
                 $c->app->log->debug( "Nexmo \U${mode}\E request failed. Something strange: CODE[${code}]." )
                     if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-                return( -1, "Something strange: CODE[${code}]" , undef );
+                return( -1, "Something strange: CODE[${code}]" , {} );
             }
             #
             $c->app->log->debug( "Nexmo \U${mode}\E response: " . Dumper $res->json )
@@ -111,15 +111,17 @@ sub register {
                     return ( $res->json("/messages/$i/status"), $res->json("/messages/$i/error-text"), $res->json )
                         if $res->json("/messages/$i/status") != 0;
                 }
+                #
                 return( 0, "Success", $res->json );
             }
         } else {
-            # network error (for the future)
-            my ($error, $code) = ('', '');
+            # network error
             ($error, $code) = $tx->error;
+            $error ||= '';
+            $code ||= '';
             $c->app->log->debug( "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error]." )
                 if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-            return( -1, "Network error: CODE[$code] MESSAGE[$error]", undef );
+            return( -1, "Network error: CODE[$code] MESSAGE[$error]", {} );
             #
         }
 
@@ -418,8 +420,6 @@ Success.
 =item B<-1>
 
 Network error.
-I<Maybe you will never encounter with this response code.
-It was left for the future, if something happens to Nexmo service...>
 
 =item B<1 - 99>
 
@@ -444,13 +444,6 @@ If you need error codes of all parts, use C<$info> hash.
 =head2 Additional information (C<$info>)
 
 Hash that corresponds to the Nexmo JSON response.
-C<$info> is undefined if C<$err> equals to B<-1>:
-
-    if ($err == -1) {
-        # $info is undefined
-    } else {
-        # $info is defined
-    }
 
 =head1 DEBUG
 
