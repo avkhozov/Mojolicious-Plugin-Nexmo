@@ -1,6 +1,6 @@
 Changes
 Makefile.PL
 MANIFEST
-README
-t/Mojolicious-Plugin-Nexmo.t
+LICENSE
+t/nexmo.t
 lib/Mojolicious/Plugin/Nexmo.pm
