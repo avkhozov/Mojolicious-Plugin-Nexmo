@@ -5,131 +5,134 @@ use Mojo::URL;
 use Mojo::JSON;
 
 use Data::Dumper;
-$Data::Dumper::Indent = 0;
-$Data::Dumper::Terse = 1;
+local $Data::Dumper::Indent = 0;
+local $Data::Dumper::Terse  = 1;
 
-our $VERSION = '0.02.01';
+
+our $VERSION = '0.90';
 
 sub register {
 
-    my ($self, $app, $conf) = @_;
+  my ($self, $app, $conf) = @_;
 
-    my $base_url = Mojo::URL->new('https://rest.nexmo.com');
+  my $base_url = Mojo::URL->new('https://rest.nexmo.com');
 
-    # Required params
-    for my $param (qw( api_key api_secret )) {
-        die "Nexmo: param '$param' is required." unless $conf->{$param};
-        $base_url->query->param($param => $conf->{$param});
-    }
+  # Required params
+  for my $param (qw( api_key api_secret )) {
+    die "Nexmo: param '$param' is required." unless $conf->{$param};
+    $base_url->query->param($param => $conf->{$param});
+  }
 
-    # nexmo helper
-    $app->helper(nexmo => sub {
+  # nexmo helper
+  $app->helper(
+    nexmo => sub {
 
-        my $c = shift;
-        my $cb = ref $_[-1] eq 'CODE' ? pop : undef;
-        my $args = {@_};
-        my $url = $base_url->clone;
+      my $c    = shift;
+      my $cb   = ref $_[-1] eq 'CODE' ? pop : undef;
+      my $args = {@_};
+      my $url  = $base_url->clone;
 
-        # Mode (SMS / TTS)
-        my $mode = lc ($args->{'mode'} || $conf->{'mode'} || '');
-        if ($mode eq 'sms') {
-            $url->path('/sms/json');
-        } elsif ($mode eq 'tts') {
-            $url->path('/tts/json');
-        } else {
-            die "Nexmo: no such mode ('${mode}'). Use 'TTS' or 'SMS'.";
-        }
+      # Mode (SMS / TTS)
+      my $mode = lc($args->{'mode'} || $conf->{'mode'} || '');
+      if ($mode eq 'sms') {
+        $url->path('/sms/json');
+      } elsif ($mode eq 'tts') {
+        $url->path('/tts/json');
+      } else {
+        die "Nexmo: no such mode ('${mode}'). Use 'TTS' or 'SMS'.";
+      }
 
-        # Params for request
-        for my $param (keys %$args) {
-            next if $param eq 'mode';
-            my $value = $args->{$param};
-            $url->query->param($param => $value) if defined $value;
-        }
-        for my $param (keys %$conf) {
-            next if ( $param eq 'mode' || $param eq 'api_key' || $param eq 'api_secret' );
-            next if exists $args->{$param}; # ability to disable global parameters
-            my $value = $conf->{$param};
-            $url->query->param($param => $value) if defined $value;
-        }
-        # Log HTTP request
-        $c->app->log->debug( "Nexmo \U${mode}\E request:  " . $url ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+      # Params for request
+      for my $param (keys %$args) {
+        next if $param eq 'mode';
+        my $value = $args->{$param};
+        $url->query->param($param => $value) if defined $value;
+      }
+      for my $param (keys %$conf) {
+        next if ($param eq 'mode' || $param eq 'api_key' || $param eq 'api_secret');
+        next if exists $args->{$param};    # ability to disable global parameters
+        my $value = $conf->{$param};
+        $url->query->param($param => $value) if defined $value;
+      }
 
-        # Non blocking
-        return $c->ua->get($url => sub {
-            my ($ua, $tx) = @_;
-            if ( my $res = $tx->success ) {
-                # response code != 200
-                if ( (my $code = $tx->res->code) != 200 ) {
-                    $code ||= '';
-                    $c->app->log->debug( "Nexmo \U${mode}\E request failed. Something strange: CODE[${code}]." )
-                        if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-                    return $c->$cb( -1, "Something strange: CODE[${code}]" , {} );
-                }
-                #
-                $c->app->log->debug( "Nexmo \U${mode}\E response: " . Dumper $res->json ) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-                if ($mode eq 'tts') {
-                    $c->$cb( $res->json('/status'), $res->json('/error-text'), $res->json );
-                } elsif ($mode eq 'sms') {
-                    # SMS can be divided into several parts
-                    my $count = $res->json('/message-count') - 1;
-                    for my $i (0..$count) {
-                        return $c->$cb( $res->json("/messages/$i/status"), $res->json("/messages/$i/error-text"), $res->json )
-                            if $res->json("/messages/$i/status") != 0;
-                    }
-                    #
-                    $c->$cb( 0, "Success", $res->json );
-                }
-            } else {
-                # network error
-                my ($error, $code) = $tx->error;
-                $error ||= '';
-                $code ||= '';
-                $c->app->log->debug( "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error]." )
-                    if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-                $c->$cb( -1, "Network error: CODE[$code] MESSAGE[$error]", {} );
-                #
+      # Log HTTP request
+      $c->app->log->debug("Nexmo \U${mode}\E request:  " . $url) if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+
+      # Non blocking
+      return $c->ua->get(
+        $url => sub {
+          my ($ua, $tx) = @_;
+          if (my $res = $tx->success) {
+
+            if ((my $code = $tx->res->code) != 200) {
+              $c->app->log->debug(
+                "Nexmo \U${mode}\E request failed. Something strange: CODE[${code}].")
+                if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+              return $c->$cb(-1, "Something strange: CODE[${code}]", {});
             }
+
+            $c->app->log->debug("Nexmo \U${mode}\E response: " . Dumper $res->json)
+              if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+            if ($mode eq 'tts') {
+              $c->$cb($res->json('/status'), $res->json('/error-text'), $res->json);
+            } elsif ($mode eq 'sms') {
+
+              # SMS can be divided into several parts
+              my $count = $res->json('/message-count') - 1;
+              for my $i (0 .. $count) {
+                return $c->$cb(
+                  $res->json("/messages/$i/status"),
+                  $res->json("/messages/$i/error-text"),
+                  $res->json
+                ) if $res->json("/messages/$i/status") != 0;
+              }
+
+              $c->$cb(0, "Success", $res->json);
+            }
+          } else {
+            my ($error, $code) = $tx->error;
+            $code //= '';
+            $c->app->log->debug(
+              "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error].")
+              if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+            $c->$cb(-1, "Network error: CODE[$code] MESSAGE[$error]", {});
+          }
         }) if $cb;
 
-        # Blocking
-        my $tx = $c->ua->get($url);
-        if ( my $res = $tx->success ) {
-            # response code != 200
-            if ( (my $code = $res->code) != 200 ) {
-                $code ||= '';
-                $c->app->log->debug( "Nexmo \U${mode}\E request failed. Something strange: CODE[${code}]." )
-                    if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-                return( -1, "Something strange: CODE[${code}]" , {} );
-            }
-            #
-            $c->app->log->debug( "Nexmo \U${mode}\E response: " . Dumper $res->json )
-                if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-            if ($mode eq 'tts') {
-                return( $res->json('/status'), $res->json('/error-text'), $res->json );
-            } elsif ($mode eq 'sms') {
-                # SMS can be divided into several parts
-                my $count = $res->json('/message-count') - 1;
-                for my $i (0..$count) {
-                    return ( $res->json("/messages/$i/status"), $res->json("/messages/$i/error-text"), $res->json )
-                        if $res->json("/messages/$i/status") != 0;
-                }
-                #
-                return( 0, "Success", $res->json );
-            }
-        } else {
-            # network error
-            my ($error, $code) = $tx->error;
-            $error ||= '';
-            $code ||= '';
-            $c->app->log->debug( "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error]." )
-                if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
-            return( -1, "Network error: CODE[$code] MESSAGE[$error]", {} );
-            #
+      # Blocking
+      my $tx = $c->ua->get($url);
+      if (my $res = $tx->success) {
+        if ((my $code = $res->code) != 200) {
+          $c->app->log->debug("Nexmo \U${mode}\E request failed. Something strange: CODE[${code}].")
+            if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+          return (-1, "Something strange: CODE[${code}]", {});
         }
 
-    });
+        $c->app->log->debug("Nexmo \U${mode}\E response: " . Dumper $res->json)
+          if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+        if ($mode eq 'tts') {
+          return ($res->json('/status'), $res->json('/error-text'), $res->json);
+        } elsif ($mode eq 'sms') {
 
+          # SMS can be divided into several parts
+          my $count = $res->json('/message-count') - 1;
+          for my $i (0 .. $count) {
+            return ($res->json("/messages/$i/status"), $res->json("/messages/$i/error-text"),
+              $res->json)
+              if $res->json("/messages/$i/status") != 0;
+          }
+
+          return (0, "Success", $res->json);
+        }
+      } else {
+        my ($error, $code) = $tx->error;
+        $code //= '';
+        $c->app->log->debug(
+          "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error].")
+          if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
+        return (-1, "Network error: CODE[$code] MESSAGE[$error]", {});
+      }
+    });
 }
 
 1;
@@ -143,7 +146,7 @@ with L<Nexmo|https://www.nexmo.com/> provider.
 
 =head1 VERSION
 
-1.00
+0.90
 
 =head1 SYNOPSIS
 
@@ -466,14 +469,27 @@ L<SMS::Send::Nexmo>
 
 =head1 AUTHOR
 
+=over 2
+
 Andrey Khozov, E<lt>avkhozov@googlemail.comE<gt>
+
+=back
+
+=head1 CORE DEVELOPERS
+
+=over 2
+
+Georgiy Alexeew, E<lt>alexeew.georgiy@gmail.comE<gt>
+
+Alexey Stavrov, E<lt>logioniz@yandex.ruE<gt>
+
+=back
 
 =head1 COPYRIGHT AND LICENSE
 
-Copyright (C) 2014 by avkhozov
+Copyright (C) 2014, Andrey Khozov
 
-This library is free software; you can redistribute it and/or modify
-it under the same terms as Perl itself, either Perl version 5.10.1 or,
-at your option, any later version of Perl 5 you may have available.
+This program is free software, you can redistribute it and/or modify it under
+the terms of the Artistic License version 2.0.
 
 =cut
