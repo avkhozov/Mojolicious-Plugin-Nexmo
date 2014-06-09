@@ -8,8 +8,7 @@ use Data::Dumper;
 local $Data::Dumper::Indent = 0;
 local $Data::Dumper::Terse  = 1;
 
-
-our $VERSION = '0.90';
+our $VERSION = '0.91';
 
 sub register {
 
@@ -18,7 +17,7 @@ sub register {
   my $base_url = Mojo::URL->new('https://rest.nexmo.com');
 
   # Required params
-  for my $param (qw( api_key api_secret )) {
+  for my $param (qw(api_key api_secret)) {
     die "Nexmo: param '$param' is required." unless $conf->{$param};
     $base_url->query->param($param => $conf->{$param});
   }
@@ -90,8 +89,7 @@ sub register {
               $c->$cb(0, "Success", $res->json);
             }
           } else {
-            my ($error, $code) = $tx->error;
-            $code //= '';
+            my ($error, $code) = ($tx->error->{message}, $tx->error->{code} // '');
             $c->app->log->debug(
               "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error].")
               if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};
@@ -125,8 +123,7 @@ sub register {
           return (0, "Success", $res->json);
         }
       } else {
-        my ($error, $code) = $tx->error;
-        $code //= '';
+        my ($error, $code) = ($tx->error->{message}, $tx->error->{code} // '');
         $c->app->log->debug(
           "Nexmo \U${mode}\E request failed. Network error: CODE[$code] MESSAGE[$error].")
           if $ENV{'MOJOLICIOUS_NEXMO_DEBUG'};

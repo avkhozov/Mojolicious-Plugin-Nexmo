@@ -12,10 +12,10 @@ unless ($ENV{TEST_KEY} && $ENV{TEST_SECRET} && $ENV{TEST_NUMBER}) {
 
 # Required Nexmo parameters
 eval { plugin 'Nexmo' => {api_key => $ENV{TEST_KEY}}; };
-like($@, qr/is required for nexmo/i, 'api_secret missed');
+like($@, qr/Nexmo.*is required/i, 'api_secret missed');
 #
 eval { plugin 'Nexmo' => {api_secret => $ENV{TEST_SECRET}}; };
-like($@, qr/is required for nexmo/i, 'api_key missed');
+like($@, qr/Nexmo.*is required/i, 'api_key missed');
 
 plugin 'Nexmo' => {api_key => $ENV{TEST_KEY}, api_secret => $ENV{TEST_SECRET}};
 

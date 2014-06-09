@@ -4,7 +4,7 @@ use ExtUtils::MakeMaker;
 WriteMakefile(
   NAME          => 'Mojolicious::Plugin::Nexmo',
   VERSION_FROM  => 'lib/Mojolicious/Plugin/Nexmo.pm',
-  PREREQ_PM     => {Mojolicious => "4"},
+  PREREQ_PM     => {Mojolicious => "5"},
   ABSTRACT_FROM => 'lib/Mojolicious/Plugin/Nexmo.pm',
   AUTHOR        => 'Andrey Khozov <avkhozov@googlemail.com>',
   META_MERGE    => {

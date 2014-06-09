@@ -1,5 +1,8 @@
 Revision history for Perl extension Mojolicious::Plugin::Nexmo.
 
+0.91  2014-06-09
+    - Updated to Mojo 5.0
+
 0.90  2014-03-28
     - First release
 
